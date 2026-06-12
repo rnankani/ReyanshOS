@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ReyanshOS</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #000000;
+      color: #c9d1d9;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ===== SVG ICONS ===== */
+    .svg-icon {
+      width: 18px;
+      height: 18px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex-shrink: 0;
+    }
+    .svg-icon.filled { fill: currentColor; stroke: none; }
+    .svg-icon .stroke-only { fill: none; }
+
+    /* ===== SIDEBAR ===== */
+    .sidebar {
+      width: 220px;
+      background: rgba(22, 27, 34, 0.55);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-right: 1px solid rgba(48, 54, 61, 0.5);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .sidebar-logo {
+      padding: 22px 20px 18px;
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #f0f6fc;
+      letter-spacing: -0.3px;
+      border-bottom: 1px solid rgba(48, 54, 61, 0.4);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .sidebar-logo .logo-mark {
+      width: 26px;
+      height: 26px;
+    }
+
+    .sidebar-section {
+      padding: 18px 12px 6px;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 1.8px;
+      color: #484f58;
+      font-weight: 600;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 14px;
+      margin: 2px 8px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.12s;
+      font-size: 0.88rem;
+      color: #8b949e;
+      text-decoration: none;
+    }
+
+    .nav-item:hover {
+      background: rgba(56, 63, 70, 0.25);
+      color: #c9d1d9;
+    }
+
+    .nav-item.active {
+      background: rgba(56, 139, 253, 0.12);
+      color: #58a6ff;
+      font-weight: 600;
+    }
+
+    .nav-item .badge {
+      margin-left: auto;
+      background: #da3633;
+      color: #fff;
+      font-size: 0.68rem;
+      padding: 2px 7px;
+      border-radius: 20px;
+      font-weight: 600;
+    }
+
+    .nav-item.coming-soon {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    .nav-item.coming-soon:hover {
+      background: transparent;
+      color: #8b949e;
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 12px;
+      border-top: 1px solid rgba(48, 54, 61, 0.4);
+    }
+
+    .sidebar-footer .nav-item {
+      font-size: 0.82rem;
+    }
+
+    /* ===== MAIN CONTENT ===== */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: #0d1117;
+    }
+
+    /* ===== TOP BAR ===== */
+    .topbar {
+      background: rgba(13, 17, 23, 0.7);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid #21262d;
+      padding: 12px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .topbar-left h2 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: #f0f6fc;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .topbar-left .subtitle {
+      font-size: 0.75rem;
+      color: #484f58;
+      margin-top: 2px;
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .refresh-btn {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      transition: all 0.12s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .refresh-btn:hover {
+      background: #30363d;
+      border-color: #8b949e;
+    }
+
+    .timer-text {
+      font-size: 0.75rem;
+      color: #484f58;
+    }
+
+    .timer-text span { color: #8b949e; }
+
+    /* ===== CATEGORY TABS ===== */
+    .category-tabs {
+      display: flex;
+      gap: 2px;
+      padding: 8px 28px;
+      background: rgba(13, 17, 23, 0.5);
+      border-bottom: 1px solid #21262d;
+      flex-shrink: 0;
+      overflow-x: auto;
+    }
+
+    .category-tab {
+      padding: 7px 16px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.12s;
+      color: #8b949e;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid transparent;
+    }
+
+    .category-tab:hover {
+      color: #c9d1d9;
+      background: rgba(56, 63, 70, 0.3);
+    }
+
+    .category-tab.active {
+      background: #21262d;
+      color: #f0f6fc;
+      font-weight: 600;
+      border-color: #30363d;
+    }
+
+    /* ===== EMAIL LIST ===== */
+    .content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 28px;
+    }
+
+    .email-card {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin-bottom: 6px;
+      transition: border-color 0.12s, background 0.12s;
+      cursor: pointer;
+    }
+
+    .email-card:hover {
+      border-color: #30363d;
+      background: #161b22;
+    }
+
+    .email-card .from {
+      font-weight: 600;
+      color: #58a6ff;
+      font-size: 0.85rem;
+    }
+
+    .email-card .subject {
+      font-size: 0.95rem;
+      margin: 4px 0;
+      color: #e6edf3;
+      font-weight: 500;
+    }
+
+    .email-card .meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .email-card .date {
+      font-size: 0.72rem;
+      color: #484f58;
+      white-space: nowrap;
+      padding-top: 2px;
+    }
+
+    .email-card .snippet {
+      font-size: 0.82rem;
+      color: #8b949e;
+      margin-top: 6px;
+      line-height: 1.45;
+    }
+
+    .email-card .summary {
+      background: #161b22;
+      border-left: 3px solid #da3633;
+      padding: 10px 14px;
+      margin-top: 10px;
+      border-radius: 0 6px 6px 0;
+      font-size: 0.82rem;
+      color: #8b949e;
+      line-height: 1.5;
+      display: none;
+    }
+
+    .email-card .summary.visible { display: block; }
+
+    .email-card .summary-label {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #da3633;
+      margin-bottom: 5px;
+      font-weight: 600;
+    }
+
+    /* ===== STATES ===== */
+    .loading, .empty, .error {
+      text-align: center;
+      padding: 80px 20px;
+      color: #484f58;
+    }
+
+    .loading .spinner {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      border: 2px solid #21262d;
+      border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin-bottom: 12px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error {
+      background: rgba(218, 54, 51, 0.08);
+      border: 1px solid rgba(218, 54, 51, 0.3);
+      border-radius: 8px;
+      padding: 20px;
+    }
+
+    .error a { color: #58a6ff; }
+
+    /* ===== COMING SOON ===== */
+    .coming-soon-page {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #484f58;
+      gap: 8px;
+    }
+
+    .coming-soon-page h3 { font-size: 1.1rem; color: #8b949e; font-weight: 500; }
+    .coming-soon-page p { font-size: 0.82rem; }
+
+    /* ===== SCROLLBAR ===== */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+  </style>
+</head>
+<body>
+
+  <!-- ===== SIDEBAR ===== -->
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <!-- Logo mark: R monogram -->
+      <svg class="logo-mark" viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="26" height="26" rx="6" fill="#21262d"/>
+        <text x="13" y="18" text-anchor="middle" font-family="-apple-system, sans-serif" font-weight="700" font-size="14" fill="#58a6ff">R</text>
+      </svg>
+      ReyanshOS
+    </div>
+
+    <div class="sidebar-section">Platforms</div>
+
+    <div class="nav-item active" id="nav-gmail" onclick="switchPlatform('gmail')">
+      <svg class="svg-icon" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+      Gmail
+      <span class="badge" id="total-badge">0</span>
+    </div>
+
+    <div class="nav-item coming-soon" id="nav-discord" onclick="switchPlatform('discord')">
+      <svg class="svg-icon" viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037 13.48 13.48 0 0 0-.64 1.314 18.23 18.23 0 0 0-5.434 0 13.5 13.5 0 0 0-.64-1.314.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.1 14.1 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01 10.2 10.2 0 0 0 .372.292.077.077 0 0 1-.006.127 12.9 12.9 0 0 1-1.873.892.077.077 0 0 0-.041.107 14.1 14.1 0 0 0 1.226 1.994.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 5.993-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>
+      Discord
+    </div>
+
+    <div class="nav-item coming-soon" id="nav-instagram" onclick="switchPlatform('instagram')">
+      <svg class="svg-icon" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
+      Instagram
+    </div>
+
+    <div class="nav-item coming-soon" id="nav-schoology" onclick="switchPlatform('schoology')">
+      <svg class="svg-icon" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+      Schoology
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="nav-item" onclick="window.location.href='/auth')">
+        <svg class="svg-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Re-authenticate
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <div class="main">
+
+    <!-- Top Bar -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <h2 id="page-title">
+          <svg class="svg-icon" viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          Gmail
+        </h2>
+        <div class="subtitle" id="page-subtitle">Unread emails from your inbox</div>
+      </div>
+      <div class="topbar-right">
+        <span class="timer-text">Refresh in <span id="timer">10:00</span></span>
+        <button class="refresh-btn" onclick="refresh()">
+          <svg class="svg-icon" viewBox="0 0 24 24" style="width:14px;height:14px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Refresh
+        </button>
+      </div>
+    </div>
+
+    <!-- Category Tabs -->
+    <div class="category-tabs" id="category-tabs">
+      <div class="category-tab active" id="tab-primary" onclick="switchCategory('primary')">
+        <svg class="svg-icon" viewBox="0 0 24 24" style="width:14px;height:14px"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        Primary
+      </div>
+      <div class="category-tab" id="tab-promotions" onclick="switchCategory('promotions')">
+        <svg class="svg-icon" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        Promotions
+      </div>
+      <div class="category-tab" id="tab-social" onclick="switchCategory('social')">
+        <svg class="svg-icon" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Social
+      </div>
+      <div class="category-tab" id="tab-updates" onclick="switchCategory('updates')">
+        <svg class="svg-icon" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        Updates
+      </div>
+      <div class="category-tab" id="tab-forums" onclick="switchCategory('forums')">
+        <svg class="svg-icon" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Forums
+      </div>
+    </div>
+
+    <!-- Content Area -->
+    <div class="content" id="content">
+      <div class="loading">
+        <div class="spinner"></div>
+        <br>Loading emails...
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ===== STATE =====
+    let currentPlatform = 'gmail';
+    let currentCategory = 'primary';
+    let countdown = 600;
+    let timerInterval;
+
+    // ===== PLATFORM SWITCHING =====
+    function switchPlatform(platform) {
+      currentPlatform = platform;
+
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      const navEl = document.getElementById('nav-' + platform);
+      if (navEl) navEl.classList.add('active');
+
+      const tabs = document.getElementById('category-tabs');
+      tabs.style.display = platform === 'gmail' ? 'flex' : 'none';
+
+      if (platform === 'gmail') {
+        document.getElementById('page-title').innerHTML =
+          '<svg class="svg-icon" viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Gmail';
+        document.getElementById('page-subtitle').textContent = 'Unread emails from your inbox';
+        resetTimer();
+        fetchEmails();
+      } else {
+        renderComingSoon(platform);
+      }
+    }
+
+    function renderComingSoon(platform) {
+      const names = {
+        discord:   { title: 'Discord',   desc: 'Messages, DMs, and server notifications', iconPath: 'M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037 13.48 13.48 0 0 0-.64 1.314 18.23 18.23 0 0 0-5.434 0 13.5 13.5 0 0 0-.64-1.314.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.1 14.1 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01 10.2 10.2 0 0 0 .372.292.077.077 0 0 1-.006.127 12.9 12.9 0 0 1-1.873.892.077.077 0 0 0-.041.107 14.1 14.1 0 0 0 1.226 1.994.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 5.993-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z' },
+        instagram: { title: 'Instagram', desc: 'DMs, comments, likes, and story mentions', iconPath: 'M7 2h10a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5zm0 2a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3H7zm5 3a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm4.5-3.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2z' },
+        schoology: { title: 'Schoology', desc: 'Assignments, grades, and course updates', iconPath: 'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z' },
+      };
+      const info = names[platform] || { title: platform, desc: '', iconPath: '' };
+
+      document.getElementById('page-title').innerHTML = info.title;
+      document.getElementById('page-subtitle').textContent = info.desc;
+
+      document.getElementById('content').innerHTML = `
+        <div class="coming-soon-page">
+          <svg class="svg-icon" viewBox="0 0 24 24" style="width:48px;height:48px;color:#30363d"><path d="${info.iconPath}"/></svg>
+          <h3>${info.title} — Coming Soon</h3>
+          <p>This integration is under development.</p>
+        </div>
+      `;
+    }
+
+    // ===== CATEGORY SWITCHING =====
+    function switchCategory(category) {
+      currentCategory = category;
+      document.querySelectorAll('.category-tab').forEach(el => el.classList.remove('active'));
+      document.getElementById('tab-' + category).classList.add('active');
+      resetTimer();
+      fetchEmails();
+    }
+
+    // ===== FETCH EMAILS =====
+    async function fetchEmails() {
+      const container = document.getElementById('content');
+      container.innerHTML = '<div class="loading"><div class="spinner"></div><br>Loading emails...</div>';
+
+      try {
+        const res = await fetch('/api/emails?category=' + currentCategory);
+        if (res.status === 401) {
+          container.innerHTML = `<div class="error">Not authenticated. <a href="/auth">Click here to log in with Google</a></div>`;
+          return;
+        }
+        const data = await res.json();
+        document.getElementById('total-badge').textContent = data.count;
+
+        if (data.count === 0) {
+          container.innerHTML = `
+            <div class="empty">
+              <svg class="svg-icon" viewBox="0 0 24 24" style="width:40px;height:40px;color:#30363d;margin-bottom:12px"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+              <br>No unread emails in this category!
+            </div>`;
+          return;
+        }
+
+        container.innerHTML = '';
+        for (const email of data.emails) {
+          const card = document.createElement('div');
+          card.className = 'email-card';
+          card.innerHTML = `
+            <div class="from">${escapeHtml(email.from)}</div>
+            <div class="subject">${escapeHtml(email.subject)}</div>
+            <div class="meta-row">
+              <div class="snippet">${escapeHtml(email.snippet)}</div>
+              <div class="date">${formatDate(email.date)}</div>
+            </div>
+            <div class="summary" id="summary-${email.id}">
+              <div class="summary-label">
+                <svg class="svg-icon" viewBox="0 0 24 24" style="width:12px;height:12px;margin-right:4px;vertical-align:-1px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                Summary
+              </div>
+              <div class="summary-text">Loading...</div>
+            </div>
+          `;
+          card.onclick = () => toggleSummary(email.id);
+          container.appendChild(card);
+        }
+      } catch (err) {
+        container.innerHTML = `<div class="error">Error: ${err.message}</div>`;
+      }
+    }
+
+    // ===== TOGGLE SUMMARY =====
+    async function toggleSummary(emailId) {
+      const el = document.getElementById('summary-' + emailId);
+      const isVisible = el.classList.contains('visible');
+      el.classList.toggle('visible');
+      if (isVisible) return;
+
+      const textEl = el.querySelector('.summary-text');
+      textEl.textContent = 'Generating summary...';
+
+      try {
+        const res = await fetch('/api/email/' + emailId);
+        const data = await res.json();
+        textEl.textContent = generateSummary(data);
+      } catch (err) {
+        textEl.textContent = 'Failed to load email body.';
+      }
+    }
+
+    // ===== EXTRACTIVE SUMMARY =====
+    function generateSummary(email) {
+      const text = (email.body || email.snippet || '').replace(/\s+/g, ' ').trim();
+      if (!text) return 'No content to summarize.';
+      const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+      const meaningful = sentences.filter(s => s.trim().length > 20);
+      const summary = meaningful.slice(0, 3).join(' ').trim();
+      return summary || text.substring(0, 300);
+    }
+
+    // ===== REFRESH =====
+    function refresh() {
+      resetTimer();
+      fetchEmails();
+    }
+
+    // ===== TIMER =====
+    function resetTimer() {
+      countdown = 600;
+      updateTimerDisplay();
+    }
+
+    function updateTimerDisplay() {
+      const m = Math.floor(countdown / 60);
+      const s = countdown % 60;
+      document.getElementById('timer').textContent = `${m}:${s.toString().padStart(2, '0')}`;
+    }
+
+    function startTimer() {
+      timerInterval = setInterval(() => {
+        countdown--;
+        updateTimerDisplay();
+        if (countdown <= 0) {
+          if (currentPlatform === 'gmail') fetchEmails();
+          resetTimer();
+        }
+      }, 1000);
+    }
+
+    // ===== UTILS =====
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str || '';
+      return div.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      try { return new Date(dateStr).toLocaleString(); }
+      catch { return dateStr; }
+    }
+
+    // ===== INIT =====
+    fetchEmails();
+    startTimer();
+  </script>
+</body>
+</html>
