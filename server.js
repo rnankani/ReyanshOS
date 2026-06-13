@@ -7,8 +7,8 @@ const app = express();
 const PORT = 3000;
 
 // --- OAuth2 setup ---
-const CREDENTIALS_PATH = path.join(__dirname, 'credentials.json');
-const TOKEN_PATH = path.join(__dirname, 'token.json');
+const CREDENTIALS_PATH=path.join(__dirname, 'credentials.json');
+const TOKEN_PATH=path.join(__dirname, 'token.json');
 
 let oAuth2Client;
 
