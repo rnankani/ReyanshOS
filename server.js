@@ -6,566 +6,221 @@ const path = require('path');
 const app = express();
 const PORT = 3000;
 
-// --- OAuth2 setup ---
+// DISCORD BOT
+let discordClient = null;
+let discordReady = false;
+const DISCORD_TOKEN_PATH=path.join(__dirname, 'discord_token.txt');
+let discordCache = { channels: [], dms: [], lastFetched: 0 };
+
+function startDiscordBot() {
+  try {
+    if (!fs.existsSync(DISCORD_TOKEN_PATH)) { console.log('Discord: no token file'); return; }
+    const token = fs.readFileSync(DISCORD_TOKEN_PATH, 'utf8').trim();
+    if (!token || token === 'YOUR_DISCORD_BOT_TOKEN_HERE') { console.log('Discord: token not set'); return; }
+    const { Client, GatewayIntentBits } = require('discord.js');
+    discordClient = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages] });
+    discordClient.on('ready', () => { discordReady = true; console.log('Discord: logged in as ' + discordClient.user.tag); });
+    discordClient.on('error', (err) => { console.error('Discord error:', err.message); discordReady = false; });
+    discordClient.login(token).catch(err => console.error('Discord login failed:', err.message));
+  } catch (err) { console.error('Discord setup:', err.message); }
+}
+
+async function fetchDiscordMessages() {
+  if (!discordClient || !discordReady) return { channels: [], dms: [], error: 'Bot not connected' };
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  const channelsData = [], dmsData = [];
+  try {
+    for (const guild of discordClient.guilds.cache.values()) {
+      for (const channel of guild.channels.cache.values()) {
+        if (channel.type !== 0) continue;
+        try {
+          const messages = await channel.messages.fetch({ limit: 50 });
+          const recent = messages.filter(m => m.createdTimestamp > since && !m.author.bot);
+          if (recent.size > 0) channelsData.push({ serverName: guild.name, channelName: channel.name, messages: recent.map(m => ({ id: m.id, author: m.author.username, content: m.content, timestamp: m.createdTimestamp })).sort((a, b) => a.timestamp - b.timestamp) });
+        } catch(e) {}
+      }
+    }
+    discordCache = { channels: channelsData, dms: dmsData, lastFetched: Date.now() };
+    return discordCache;
+  } catch (err) { return { channels: [], dms: [], error: err.message }; }
+}
+
+app.get('/api/discord/messages', async (req, res) => {
+  if (!discordClient) return res.status(503).json({ error: 'Discord bot not configured' });
+  if (Date.now() - discordCache.lastFetched < 10 * 60 * 1000) return res.json(discordCache);
+  res.json(await fetchDiscordMessages());
+});
+app.get('/api/discord/status', (req, res) => {
+  res.json({ connected: discordReady, username: discordClient?.user?.tag || null, guilds: discordClient?.guilds?.cache?.size || 0 });
+});
+startDiscordBot();
+
+// GMAIL OAUTH2
 const CREDENTIALS_PATH=path.join(__dirname, 'credentials.json');
 const TOKEN_PATH=path.join(__dirname, 'token.json');
-
 let oAuth2Client;
 
-// Gmail category to label ID mapping
-const CATEGORY_LABELS = {
-  primary:    'CATEGORY_PERSONAL',
-  promotions: 'CATEGORY_PROMOTIONS',
-  social:     'CATEGORY_SOCIAL',
-  updates:    'CATEGORY_UPDATES',
-  forums:     'CATEGORY_FORUMS',
-};
+const CATEGORY_QUERIES = { primary: 'category:primary', promotions: 'category:promotions', social: 'category:social', updates: 'category:updates', forums: 'category:forums' };
 
 function loadCredentials() {
-  const content = fs.readFileSync(CREDENTIALS_PATH);
-  const credentials = JSON.parse(content);
+  const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH));
   const { client_secret, client_id, redirect_uris } = credentials.web;
   oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
 }
-
 function loadToken() {
-  if (fs.existsSync(TOKEN_PATH)) {
-    const token = JSON.parse(fs.readFileSync(TOKEN_PATH));
-    oAuth2Client.setCredentials(token);
-    return true;
-  }
+  if (fs.existsSync(TOKEN_PATH)) { oAuth2Client.setCredentials(JSON.parse(fs.readFileSync(TOKEN_PATH))); return true; }
   return false;
 }
 
-// ============================================================
-// AGENT 1: PRIORITY SCORING ENGINE
-// ============================================================
 function scorePriority(email) {
   const subject = (email.subject || '').toLowerCase();
-  const body = (email.body || '').toLowerCase();
-  const snippet = (email.snippet || '').toLowerCase();
+  const body = (email.body || email.snippet || '').toLowerCase();
   const from = (email.from || '').toLowerCase();
-  const text = subject + ' ' + body + ' ' + snippet;
-
-  let score = 0;
-  const signals = [];
-
-  // --- HIGH PRIORITY SIGNALS ---
-  const highPatterns = [
-    { pattern: /\b(interview|interviews)\b/i, reason: 'Interview mentioned', pts: 30 },
-    { pattern: /\b(deadline|due date|due by|expires?)\b/i, reason: 'Deadline detected', pts: 28 },
-    { pattern: /\b(meeting request|schedule a meeting|calendar invite|zoom link|google meet)\b/i, reason: 'Meeting request', pts: 25 },
-    { pattern: /\b(action required|please reply|respond by|reply by|respond asap|urgent)\b/i, reason: 'Action/response required', pts: 25 },
-    { pattern: /\b(offer letter|job offer|acceptance|admission|accepted|rejected|decision)\b/i, reason: 'Important decision/offer', pts: 25 },
-    { pattern: /\b(payment|invoice|receipt|billing|charged|refund|transaction)\b/i, reason: 'Financial matter', pts: 20 },
-    { pattern: /\b(assignment|homework|submission|project due|exam|test|quiz|grade)\b/i, reason: 'School/work task', pts: 22 },
-    { pattern: /\b(confirm your|verify your|activate your|security alert|suspicious)\b/i, reason: 'Security/verification needed', pts: 20 },
-    { pattern: /\b(today|tomorrow|this morning|this afternoon|by end of day|eod)\b/i, reason: 'Time-sensitive language', pts: 18 },
-    { pattern: /\b(asap|immediately|right away|at your earliest convenience)\b/i, reason: 'Urgency language', pts: 18 },
-    { pattern: /\b(cancel|cancellation|reschedule|change of plan|update)\b/i, reason: 'Schedule change', pts: 15 },
-    { pattern: /\b(application|applied|status update|under review|next steps)\b/i, reason: 'Application status', pts: 15 },
-  ];
-
-  for (const hp of highPatterns) {
-    if (hp.pattern.test(text)) {
-      score += hp.pts;
-      signals.push('+' + hp.pts + ' ' + hp.reason);
-    }
-  }
-
-  // --- MEDIUM PRIORITY SIGNALS ---
-  const medPatterns = [
-    { pattern: /\b(follow up|following up|just checking|wanted to ask|quick question)\b/i, reason: 'Follow-up message', pts: 10 },
-    { pattern: /\b(reminder|don't forget|heads up|fyi|for your information)\b/i, reason: 'Reminder/FYI', pts: 8 },
-    { pattern: /\b(document|attachment|review|feedback|sign|signature)\b/i, reason: 'Document/review needed', pts: 10 },
-    { pattern: /\b(event|invitation|rsvp|join us|save the date)\b/i, reason: 'Event/invitation', pts: 8 },
-    { pattern: /\b(update|newsletter|weekly|monthly|digest)\b/i, reason: 'Update/newsletter', pts: 5 },
-    { pattern: /\b(thank you|thanks|appreciate|great job|congratulations)\b/i, reason: 'Acknowledgment', pts: 5 },
-  ];
-
-  for (const mp of medPatterns) {
-    if (mp.pattern.test(text)) {
-      score += mp.pts;
-      signals.push('+' + mp.pts + ' ' + mp.reason);
-    }
-  }
-
-  // --- LOW PRIORITY SIGNALS ---
-  const lowPatterns = [
-    { pattern: /\b(unsubscribe|opt out|marketing|promo|promotion|sale|discount|deal|coupon)\b/i, reason: 'Promotional content', pts: -15 },
-    { pattern: /\b(no reply|noreply|no-reply|don't reply|do not reply)\b/i, reason: 'No-reply address', pts: -10 },
-    { pattern: /\b(automated|auto-generated|system notification|alert from)\b/i, reason: 'Automated notification', pts: -8 },
-    { pattern: /\b(social|liked your|followed you|commented on|tagged you|shared your)\b/i, reason: 'Social notification', pts: -5 },
-    { pattern: /\b(new post|new video|new episode|check out|you might like|recommended for you)\b/i, reason: 'Content recommendation', pts: -10 },
-  ];
-
-  for (const lp of lowPatterns) {
-    if (lp.pattern.test(text)) {
-      score += lp.pts;
-      signals.push(lp.pts + ' ' + lp.reason);
-    }
-  }
-
-  // --- SENDER REPUTATION ---
-  const importantSenders = [
-    'professor', 'dean', 'principal', 'teacher', 'instructor',
-    'hr@', 'careers@', 'recruiting@', 'jobs@', 'hiring@',
-    'admin@', 'office@', 'registrar@', 'financial',
-    'support@', 'help@', 'billing@', 'noreply@github',
-    'no-reply@linkedin', 'notifications@linkedin',
-  ];
-
-  for (const sender of importantSenders) {
-    if (from.includes(sender)) {
-      score += 8;
-      signals.push('+8 Sender: ' + sender);
-      break;
-    }
-  }
-
-  // --- QUESTION DETECTION (someone asking you something) ---
-  const questionCount = (text.match(/\?/g) || []).length;
-  if (questionCount > 0) {
-    score += Math.min(questionCount * 3, 12);
-    signals.push('+' + Math.min(questionCount * 3, 12) + ' Contains question(s)');
-  }
-
-  // --- DETERMINE LEVEL ---
+  const text = subject + ' ' + body;
+  let score = 0; const signals = [];
+  [{ p:/\b(interview|interviews)\b/i, r:'Interview', pts:30 },{ p:/\b(deadline|due date|due by|expires?)\b/i, r:'Deadline', pts:28 },{ p:/\b(meeting request|schedule a meeting|zoom link|google meet)\b/i, r:'Meeting', pts:25 },{ p:/\b(action required|please reply|respond by|urgent)\b/i, r:'Action required', pts:25 },{ p:/\b(offer letter|job offer|admission|accepted|rejected|decision)\b/i, r:'Decision/offer', pts:25 },{ p:/\b(payment|invoice|receipt|billing|charged|refund)\b/i, r:'Financial', pts:20 },{ p:/\b(assignment|homework|submission|exam|test|quiz|grade)\b/i, r:'School task', pts:22 },{ p:/\b(confirm your|verify your|security alert)\b/i, r:'Security', pts:20 },{ p:/\b(today|tomorrow|by end of day|eod)\b/i, r:'Time-sensitive', pts:18 },{ p:/\b(asap|immediately)\b/i, r:'Urgent', pts:18 }].forEach(hp => { if (hp.p.test(text)) { score += hp.pts; signals.push('+' + hp.pts + ' ' + hp.r); } });
+  [{ p:/\b(follow up|following up|quick question)\b/i, r:'Follow-up', pts:10 },{ p:/\b(reminder|don't forget|heads up|fyi)\b/i, r:'Reminder', pts:8 },{ p:/\b(document|attachment|review|feedback|sign)\b/i, r:'Document', pts:10 },{ p:/\b(event|invitation|rsvp)\b/i, r:'Event', pts:8 }].forEach(mp => { if (mp.p.test(text)) { score += mp.pts; signals.push('+' + mp.pts + ' ' + mp.r); } });
+  [{ p:/\b(unsubscribe|promo|sale|discount|deal|coupon|marketing)\b/i, r:'Promotional', pts:-15 },{ p:/\b(no reply|noreply|no-reply)\b/i, r:'No-reply', pts:-10 },{ p:/\b(automated|auto-generated|system notification)\b/i, r:'Automated', pts:-8 },{ p:/\b(new post|check out|recommended for you)\b/i, r:'Recommendation', pts:-10 }].forEach(lp => { if (lp.p.test(text)) { score += lp.pts; signals.push(lp.pts + ' ' + lp.r); } });
+  ['professor','dean','principal','teacher','hr@','careers@','recruiting@','admin@','office@','registrar@','financial','support@','billing@'].forEach(s => { if (from.includes(s)) { score += 8; signals.push('+8 Sender: ' + s); } });
+  const qc = (text.match(/\?/g) || []).length;
+  if (qc > 0) { score += Math.min(qc * 3, 12); signals.push('+' + Math.min(qc * 3, 12) + ' Questions'); }
   let level, reason;
-  if (score >= 20) {
-    level = 'high';
-    reason = signals.length > 0
-      ? 'High priority: ' + signals.slice(0, 3).join('; ')
-      : 'High priority based on content analysis';
-  } else if (score >= 8) {
-    level = 'medium';
-    reason = signals.length > 0
-      ? 'Medium priority: ' + signals.slice(0, 3).join('; ')
-      : 'Medium priority: some relevant content detected';
-  } else if (score <= -5) {
-    level = 'ignore';
-    reason = signals.length > 0
-      ? 'Low relevance: ' + signals.slice(0, 2).join('; ')
-      : 'Appears to be promotional/automated content';
-  } else {
-    level = 'low';
-    reason = signals.length > 0
-      ? 'Low priority: ' + signals.slice(0, 2).join('; ')
-      : 'No urgent signals detected';
-  }
-
+  if (score >= 20) { level = 'high'; reason = signals[0] || 'High priority'; }
+  else if (score >= 8) { level = 'medium'; reason = signals[0] || 'Medium priority'; }
+  else if (score <= -5) { level = 'ignore'; reason = signals[0] || 'Low relevance'; }
+  else { level = 'low'; reason = signals[0] || 'No urgent signals'; }
   return { score, level, reason, signals };
 }
 
-// ============================================================
-// AGENT 2: ACTION EXTRACTION ENGINE
-// ============================================================
-function extractActions(email) {
-  const subject = (email.subject || '').toLowerCase();
-  const body = (email.body || '').toLowerCase();
-  const snippet = (email.snippet || '').toLowerCase();
-  const text = subject + ' ' + body + ' ' + snippet;
-  const originalBody = email.body || '';
-  const originalSubject = email.subject || '';
-
-  const actions = [];
-
-  // --- REPLY NEEDED ---
-  const replyPatterns = [
-    { pattern: /\b(please reply|reply to this|respond to this|get back to me|let me know|what do you think|your thoughts|your opinion)\b/i, action: 'Reply needed', detail: 'The sender is asking for your response or opinion.' },
-    { pattern: /\b(can you|could you|would you|will you|are you able to|do you have time)\b/i, action: 'Reply needed', detail: 'The sender is asking you a question or making a request.' },
-    { pattern: /\b(please confirm|confirm that|please verify|verify that|did you receive)\b/i, action: 'Confirm receipt', detail: 'The sender needs you to confirm or verify something.' },
-    { pattern: /\b(following up|follow up|just checking in|wanted to follow up)\b/i, action: 'Follow up', detail: 'This is a follow-up to a previous conversation. May need a reply.' },
-  ];
-
-  for (const rp of replyPatterns) {
-    if (rp.pattern.test(text)) {
-      actions.push({
-        action: rp.action,
-        detail: rp.detail,
-        urgency: /\b(asap|urgent|today|immediately|soon)\b/i.test(text) ? 'high' : 'medium',
-        deadline: extractDeadline(text),
-      });
-      break;
-    }
-  }
-
-  // --- MEETING TO SCHEDULE ---
-  const meetingPatterns = [
-    { pattern: /\b(schedule a meeting|set up a meeting|book a meeting|meeting request|calendar invite|zoom|google meet|teams call|call at)\b/i, action: 'Schedule meeting', detail: 'A meeting or call needs to be scheduled.' },
-    { pattern: /\b(available|availability|when are you free|what time works|find a time)\b/i, action: 'Check availability', detail: 'Someone is asking about your availability for a meeting or call.' },
-    { pattern: /\b(reschedule|move the meeting|change the time|can't make it|conflict)\b/i, action: 'Reschedule meeting', detail: 'A meeting needs to be rescheduled or there is a conflict.' },
-  ];
-
-  for (const mp of meetingPatterns) {
-    if (mp.pattern.test(text)) {
-      actions.push({
-        action: mp.action,
-        detail: mp.detail,
-        urgency: /\b(today|tomorrow|asap|this week)\b/i.test(text) ? 'high' : 'medium',
-        deadline: extractDeadline(text),
-      });
-      break;
-    }
-  }
-
-  // --- FORM TO FILL OUT ---
-  if (/\b(form|survey|questionnaire|fill out|complete the|submit your|registration)\b/i.test(text)) {
-    actions.push({
-      action: 'Fill out form/survey',
-      detail: 'A form, survey, or registration needs to be completed.',
-      urgency: /\b(deadline|due|by|before)\b/i.test(text) ? 'high' : 'medium',
-      deadline: extractDeadline(text),
-    });
-  }
-
-  // --- FILE TO REVIEW ---
-  if (/\b(review|feedback|look at|check out|attached|attachment|document|draft|proposal)\b/i.test(text)) {
-    actions.push({
-      action: 'Review document',
-      detail: 'A document or file needs to be reviewed. Check attachments.',
-      urgency: /\b(urgent|asap|today|deadline)\b/i.test(text) ? 'high' : 'medium',
-      deadline: extractDeadline(text),
-    });
-  }
-
-  // --- DEADLINE TO REMEMBER ---
-  const deadlinePatterns = [
-    { pattern: /\b(deadline|due date|due by|submit by|turn in by|last day|final date|closes on|ends on)\b/i, action: 'Deadline approaching', detail: 'There is a deadline mentioned. Note the date.' },
-    { pattern: /\b(expires?|expiration|valid until|offer ends|last chance|final reminder)\b/i, action: 'Expiration/expiry', detail: 'Something is expiring or ending soon.' },
-  ];
-
-  for (const dp of deadlinePatterns) {
-    if (dp.pattern.test(text)) {
-      actions.push({
-        action: dp.action,
-        detail: dp.detail,
-        urgency: 'high',
-        deadline: extractDeadline(text),
-      });
-      break;
-    }
-  }
-
-  // --- EVENT TO ATTEND ---
-  if (/\b(event|webinar|workshop|session|conference|meetup|join us|save the date|rsvp)\b/i.test(text)) {
-    actions.push({
-      action: 'Event to attend',
-      detail: 'An event is mentioned. Check if you need to RSVP or attend.',
-      urgency: /\b(today|tomorrow|this week|seats limited|register)\b/i.test(text) ? 'high' : 'low',
-      deadline: extractDeadline(text),
-    });
-  }
-
-  // --- TASK TO COMPLETE ---
-  const taskPatterns = [
-    { pattern: /\b(assignment|homework|project|task|deliverable|milestone)\b/i, action: 'Task to complete', detail: 'An assignment or task needs to be completed.' },
-    { pattern: /\b(payment|pay|invoice|bill|fee|tuition|subscription)\b/i, action: 'Payment needed', detail: 'A payment or fee needs to be handled.' },
-    { pattern: /\b(install|update|upgrade|download|setup|configure)\b/i, action: 'Technical task', detail: 'A technical action may be needed (install, update, setup).' },
-  ];
-
-  for (const tp of taskPatterns) {
-    if (tp.pattern.test(text)) {
-      actions.push({
-        action: tp.action,
-        detail: tp.detail,
-        urgency: /\b(urgent|asap|today|deadline|overdue)\b/i.test(text) ? 'high' : 'medium',
-        deadline: extractDeadline(text),
-      });
-      break;
-    }
-  }
-
-  // --- INTERVIEW ---
-  if (/\b(interview|interviews)\b/i.test(text)) {
-    actions.push({
-      action: 'Interview to attend/prepare',
-      detail: 'An interview is mentioned. Prepare and note the time.',
-      urgency: 'high',
-      deadline: extractDeadline(text),
-    });
-  }
-
-  // --- NO ACTION ---
-  if (actions.length === 0) {
-    const noActionReasons = [
-      { pattern: /\b(unsubscribe|promo|promotion|sale|discount|deal|coupon|marketing)\b/i, reason: 'Promotional email — no action needed.' },
-      { pattern: /\b(no reply|noreply|no-reply|don't reply|do not reply)\b/i, reason: 'Automated no-reply address — informational only.' },
-      { pattern: /\b(thank you|thanks|appreciate|great job|congratulations|well done)\b/i, reason: 'Acknowledgment — no response required.' },
-      { pattern: /\b(notification|alert|reminder|update|summary|digest|report)\b/i, reason: 'System notification — informational only.' },
-      { pattern: /\b(liked|followed|commented|tagged|shared|subscribed)\b/i, reason: 'Social notification — no action needed.' },
-    ];
-
-    let noActionReason = 'No specific action detected. Review if needed.';
-    for (const nr of noActionReasons) {
-      if (nr.pattern.test(text)) {
-        noActionReason = nr.reason;
-        break;
-      }
-    }
-
-    actions.push({
-      action: 'No action needed',
-      detail: noActionReason,
-      urgency: 'none',
-      deadline: null,
-    });
-  }
-
-  return actions;
-}
-
-// Helper: extract deadline/date mentions from text
 function extractDeadline(text) {
-  const datePatterns = [
-    /by\s+([A-Z][a-z]+ \d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?)/i,
-    /by\s+(today|tomorrow|end of day|eod|eod tomorrow)/i,
-    /due\s+([A-Z][a-z]+ \d{1,2}(?:st|nd|rd|th)?)/i,
-    /before\s+([A-Z][a-z]+ \d{1,2}(?:st|nd|rd|th)?)/i,
-    /on\s+([A-Z][a-z]+ \d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?)/i,
-    /(\d{1,2}\/\d{1,2}\/\d{2,4})/,
-    /(today|tomorrow|this week|next week|monday|tuesday|wednesday|thursday|friday)/i,
-  ];
-
-  for (const dp of datePatterns) {
-    const match = text.match(dp);
-    if (match) {
-      return match[1] || match[0];
-    }
-  }
+  const dps = [/by\s+([A-Z][a-z]+ \d{1,2}(?:st|nd|rd|th)?)/i, /by\s+(today|tomorrow|end of day|eod)/i, /due\s+([A-Z][a-z]+ \d{1,2})/i, /(\d{1,2}\/\d{1,2}\/\d{2,4})/, /(today|tomorrow|this week|monday|tuesday|wednesday|thursday|friday)/i];
+  for (const dp of dps) { const m = text.match(dp); if (m) return m[1] || m[0]; }
   return null;
 }
 
-// ============================================================
-// AUTH ROUTES
-// ============================================================
+function extractActions(email) {
+  const text = ((email.subject||'') + ' ' + (email.body||email.snippet||'')).toLowerCase();
+  const actions = [];
+  [{ p:/\b(please reply|reply to|get back to me|let me know)\b/i, a:'Reply needed', d:'Sender wants a response' },{ p:/\b(can you|could you|would you|will you)\b/i, a:'Reply needed', d:'Sender is asking you something' },{ p:/\b(please confirm|confirm that|verify)\b/i, a:'Confirm receipt', d:'Confirmation needed' }].forEach(r => { if (r.p.test(text)) { actions.push({ action:r.a, detail:r.d, urgency:/\b(asap|urgent|today)\b/i.test(text)?'high':'medium', deadline:extractDeadline(text) }); } });
+  if (/\b(schedule a meeting|set up a meeting|zoom|google meet|available|when are you free)\b/i.test(text)) actions.push({ action:'Schedule meeting', detail:'Meeting to schedule', urgency:/\b(today|tomorrow|asap)\b/i.test(text)?'high':'medium', deadline:extractDeadline(text) });
+  if (/\b(form|survey|fill out|complete the|registration)\b/i.test(text)) actions.push({ action:'Fill out form', detail:'Form/survey to complete', urgency:/\b(deadline|due|by)\b/i.test(text)?'high':'medium', deadline:extractDeadline(text) });
+  if (/\b(review|feedback|attached|attachment|document|draft)\b/i.test(text)) actions.push({ action:'Review document', detail:'Document needs review', urgency:/\b(urgent|asap|today)\b/i.test(text)?'high':'medium', deadline:extractDeadline(text) });
+  if (/\b(deadline|due date|due by|submit by|last day|closes on)\b/i.test(text)) actions.push({ action:'Deadline', detail:'Deadline mentioned', urgency:'high', deadline:extractDeadline(text) });
+  if (/\b(event|webinar|workshop|session|conference|rsvp)\b/i.test(text)) actions.push({ action:'Event', detail:'Event mentioned', urgency:/\b(today|tomorrow|register)\b/i.test(text)?'high':'low', deadline:extractDeadline(text) });
+  if (/\b(assignment|homework|project|task)\b/i.test(text)) actions.push({ action:'Task to complete', detail:'Task/assignment', urgency:/\b(urgent|asap|overdue)\b/i.test(text)?'high':'medium', deadline:extractDeadline(text) });
+  if (/\b(payment|pay|invoice|bill|fee|tuition)\b/i.test(text)) actions.push({ action:'Payment needed', detail:'Payment required', urgency:/\b(urgent|asap|overdue)\b/i.test(text)?'high':'medium', deadline:extractDeadline(text) });
+  if (/\b(interview)\b/i.test(text)) actions.push({ action:'Interview', detail:'Interview mentioned', urgency:'high', deadline:extractDeadline(text) });
+  if (actions.length === 0) {
+    let reason = 'No specific action detected';
+    if (/\b(unsubscribe|promo|sale|discount|marketing)\b/i.test(text)) reason = 'Promotional - no action';
+    else if (/\b(no reply|noreply)\b/i.test(text)) reason = 'Automated - informational';
+    else if (/\b(thank you|thanks|congratulations)\b/i.test(text)) reason = 'Acknowledgment - no response';
+    actions.push({ action:'No action needed', detail:reason, urgency:'none', deadline:null });
+  }
+  return actions;
+}
+
 app.get('/auth', (req, res) => {
   loadCredentials();
   const url = oAuth2Client.generateAuthUrl({
     access_type: 'offline',
+    prompt: 'consent',
     scope: ['https://www.googleapis.com/auth/gmail.readonly'],
   });
   res.redirect(url);
 });
-
 app.get('/oauth2callback', async (req, res) => {
-  const code = req.query.code;
-  try {
-    const { tokens } = await oAuth2Client.getToken(code);
-    oAuth2Client.setCredentials(tokens);
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens));
-    res.redirect('/');
-  } catch (err) {
-    res.send('Error authenticating: ' + err.message);
-  }
+  try { const { tokens } = await oAuth2Client.getToken(req.query.code); oAuth2Client.setCredentials(tokens); fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens)); res.redirect('/'); }
+  catch (err) { res.send('Error: ' + err.message); }
 });
 
-// ============================================================
-// API: Get unread emails with optional category filter
-// ============================================================
-app.get('/api/emails', async (req, res) => {
-  if (!oAuth2Client || !oAuth2Client.credentials.access_token) {
-    return res.status(401).json({ error: 'Not authenticated. Visit /auth first.' });
+async function ensureAuth(req, res) {
+  if (!oAuth2Client?.credentials?.access_token) {
+    res.status(401).json({ error: 'Not authenticated. Visit /auth to log in.', needsAuth: true });
+    return false;
   }
+  if (oAuth2Client.credentials.expiry_date && oAuth2Client.credentials.expiry_date < Date.now()) {
+    if (oAuth2Client.credentials.refresh_token) {
+      try {
+        const { credentials: newCreds } = await oAuth2Client.refreshAccessToken();
+        oAuth2Client.setCredentials(newCreds);
+        fs.writeFileSync(TOKEN_PATH, JSON.stringify(newCreds));
+      } catch (e) {
+        res.status(401).json({ error: 'Token refresh failed. Visit /auth to re-authenticate.', needsAuth: true });
+        return false;
+      }
+    } else {
+      res.status(401).json({ error: 'Token expired. Visit /auth to re-authenticate.', needsAuth: true });
+      return false;
+    }
+  }
+  return true;
+}
 
+// GMAIL API - PARALLEL (speed fix)
+app.get('/api/emails', async (req, res) => {
+  if (!await ensureAuth(req, res)) return;
   try {
     const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
     const category = req.query.category || 'primary';
-
     let q = 'is:unread in:inbox';
-    const labelId = CATEGORY_LABELS[category];
-    if (labelId) {
-      q += ` label:${labelId}`;
-    }
-
-    const listRes = await gmail.users.messages.list({
-      userId: 'me',
-      q: q,
-      maxResults: 25,
-    });
-
+    if (CATEGORY_QUERIES[category]) q += ' ' + CATEGORY_QUERIES[category];
+    const listRes = await gmail.users.messages.list({ userId: 'me', q, maxResults: 25 });
     const messages = listRes.data.messages || [];
-    const emails = [];
-
-    for (const msg of messages) {
-      const msgRes = await gmail.users.messages.get({
-        userId: 'me',
-        id: msg.id,
-        format: 'metadata',
-        metadataHeaders: ['From', 'Subject', 'Date'],
-      });
-
-      const headers = msgRes.data.payload.headers;
-      const getHeader = (name) => headers.find(h => h.name === name)?.value || '';
-
-      emails.push({
-        id: msg.id,
-        threadId: msg.threadId,
-        from: getHeader('From'),
-        subject: getHeader('Subject'),
-        date: getHeader('Date'),
-        snippet: msgRes.data.snippet,
-      });
-    }
-
+    const emails = (await Promise.all(messages.map(async (msg) => {
+      try {
+        const msgRes = await gmail.users.messages.get({ userId: 'me', id: msg.id, format: 'metadata', metadataHeaders: ['From','Subject','Date'] });
+        const headers = msgRes.data.payload.headers;
+        const getH = (n) => headers.find(h => h.name === n)?.value || '';
+        return { id: msg.id, threadId: msg.threadId, from: getH('From'), subject: getH('Subject'), date: getH('Date'), snippet: msgRes.data.snippet };
+      } catch(e) { return null; }
+    }))).filter(Boolean);
     res.json({ count: emails.length, emails, category });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
 });
 
-// ============================================================
-// API: Get full email body
-// ============================================================
 app.get('/api/email/:id', async (req, res) => {
-  if (!oAuth2Client || !oAuth2Client.credentials.access_token) {
-    return res.status(401).json({ error: 'Not authenticated' });
-  }
-
+  if (!await ensureAuth(req, res)) return;
   try {
     const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
-    const msgRes = await gmail.users.messages.get({
-      userId: 'me',
-      id: req.params.id,
-      format: 'full',
-    });
-
+    const msgRes = await gmail.users.messages.get({ userId: 'me', id: req.params.id, format: 'full' });
     const payload = msgRes.data.payload;
     let body = '';
-
-    function extractBody(part) {
-      if (part.mimeType === 'text/plain' && part.body.data) {
-        body += Buffer.from(part.body.data, 'base64').toString('utf8');
-      }
-      if (part.parts) {
-        part.parts.forEach(extractBody);
-      }
-    }
+    function extractBody(part) { if (part.mimeType === 'text/plain' && part.body.data) body += Buffer.from(part.body.data, 'base64').toString('utf8'); if (part.parts) part.parts.forEach(extractBody); }
     extractBody(payload);
-
     const headers = payload.headers;
-    const getHeader = (name) => headers.find(h => h.name === name)?.value || '';
-
-    res.json({
-      id: req.params.id,
-      from: getHeader('From'),
-      subject: getHeader('Subject'),
-      date: getHeader('Date'),
-      body: body.substring(0, 8000),
-      snippet: msgRes.data.snippet,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    const getH = (n) => headers.find(h => h.name === n)?.value || '';
+    res.json({ id: req.params.id, from: getH('From'), subject: getH('Subject'), date: getH('Date'), body: body.substring(0, 8000), snippet: msgRes.data.snippet });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============================================================
-// API: Analyze priority for an email (AGENT 1)
-// ============================================================
 app.get('/api/analyze-priority/:id', async (req, res) => {
-  if (!oAuth2Client || !oAuth2Client.credentials.access_token) {
-    return res.status(401).json({ error: 'Not authenticated' });
-  }
-
+  if (!await ensureAuth(req, res)) return;
   try {
     const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
-    const msgRes = await gmail.users.messages.get({
-      userId: 'me',
-      id: req.params.id,
-      format: 'full',
-    });
-
-    const payload = msgRes.data.payload;
-    let body = '';
-
-    function extractBody(part) {
-      if (part.mimeType === 'text/plain' && part.body.data) {
-        body += Buffer.from(part.body.data, 'base64').toString('utf8');
-      }
-      if (part.parts) {
-        part.parts.forEach(extractBody);
-      }
-    }
-    extractBody(payload);
-
-    const headers = payload.headers;
-    const getHeader = (name) => headers.find(h => h.name === name)?.value || '';
-
-    const email = {
-      id: req.params.id,
-      from: getHeader('From'),
-      subject: getHeader('Subject'),
-      date: getHeader('Date'),
-      body: body.substring(0, 8000),
-      snippet: msgRes.data.snippet,
-    };
-
-    const analysis = scorePriority(email);
-    res.json(analysis);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    const msgRes = await gmail.users.messages.get({ userId: 'me', id: req.params.id, format: 'metadata', metadataHeaders: ['From','Subject','Date'] });
+    const headers = msgRes.data.payload.headers;
+    const getH = (n) => headers.find(h => h.name === n)?.value || '';
+    res.json(scorePriority({ from: getH('From'), subject: getH('Subject'), snippet: msgRes.data.snippet }));
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============================================================
-// API: Extract actions for an email (AGENT 2)
-// ============================================================
 app.get('/api/extract-actions/:id', async (req, res) => {
-  if (!oAuth2Client || !oAuth2Client.credentials.access_token) {
-    return res.status(401).json({ error: 'Not authenticated' });
-  }
-
+  if (!await ensureAuth(req, res)) return;
   try {
     const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
-    const msgRes = await gmail.users.messages.get({
-      userId: 'me',
-      id: req.params.id,
-      format: 'full',
-    });
-
-    const payload = msgRes.data.payload;
-    let body = '';
-
-    function extractBody(part) {
-      if (part.mimeType === 'text/plain' && part.body.data) {
-        body += Buffer.from(part.body.data, 'base64').toString('utf8');
-      }
-      if (part.parts) {
-        part.parts.forEach(extractBody);
-      }
-    }
-    extractBody(payload);
-
-    const headers = payload.headers;
-    const getHeader = (name) => headers.find(h => h.name === name)?.value || '';
-
-    const email = {
-      id: req.params.id,
-      from: getHeader('From'),
-      subject: getHeader('Subject'),
-      date: getHeader('Date'),
-      body: body.substring(0, 8000),
-      snippet: msgRes.data.snippet,
-    };
-
-    const actions = extractActions(email);
-    res.json({ actions });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    const msgRes = await gmail.users.messages.get({ userId: 'me', id: req.params.id, format: 'metadata', metadataHeaders: ['From','Subject','Date'] });
+    const headers = msgRes.data.payload.headers;
+    const getH = (n) => headers.find(h => h.name === n)?.value || '';
+    res.json({ actions: extractActions({ from: getH('From'), subject: getH('Subject'), snippet: msgRes.data.snippet }) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ============================================================
-// Serve static frontend
-// ============================================================
-app.use(express.static(path.join(__dirname, 'public')));
+app.get('/api/settings', (req, res) => {
+  res.json({ discord: { configured: discordReady, username: discordClient?.user?.tag || null }, gmail: { configured: !!(oAuth2Client?.credentials?.access_token) } });
+});
 
-// --- Init ---
+app.use(express.static(path.join(__dirname, 'public')));
 loadCredentials();
 loadToken();
-
-app.listen(PORT, () => {
-  console.log(`ReyanshOS Dashboard running at http://localhost:${PORT}`);
-  console.log('If not authenticated, visit http://localhost:${PORT}/auth');
-});
+app.listen(PORT, () => { console.log('ReyanshOS running at http://localhost:' + PORT); });

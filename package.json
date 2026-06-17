@@ -1,7 +1,8 @@
 {
   "dependencies": {
+    "discord.js": "^14.26.4",
     "express": "^5.2.1",
-    "googleapis": "^144.0.0",
+    "googleapis": "^173.0.0",
     "node": "^26.3.0",
     "node-fetch": "^2.7.0"
   }
