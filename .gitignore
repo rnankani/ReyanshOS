@@ -1,0 +1,9 @@
+node_modules/
+token.json
+credentials.json
+discord_token.txt
+.env
+*.log
+.DS_Store
+Thumbs.db
+public/_test_syntax.js
