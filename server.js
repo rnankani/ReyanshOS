@@ -217,7 +217,80 @@ app.get('/api/extract-actions/:id', async (req, res) => {
 });
 
 app.get('/api/settings', (req, res) => {
-  res.json({ discord: { configured: discordReady, username: discordClient?.user?.tag || null }, gmail: { configured: !!(oAuth2Client?.credentials?.access_token) } });
+  res.json({
+    discord: { configured: discordReady, username: discordClient?.user?.tag || null, guilds: discordClient?.guilds?.cache?.size || 0 },
+    gmail: { configured: !!(oAuth2Client?.credentials?.access_token) },
+    instagram: { configured: false, note: 'Instagram Basic Display API — token required' },
+    schoology: { configured: false, note: 'Schoology API — consumer key/secret required' },
+    linkedin: { configured: false, note: 'LinkedIn API — OAuth2 token required' },
+  });
+});
+
+// ===== INSTAGRAM (Basic Display API) =====
+let instagramToken = process.env.INSTAGRAM_TOKEN || (fs.existsSync('instagram_token.txt') ? fs.readFileSync('instagram_token.txt', 'utf8').trim() : null);
+let instagramCache = { media: [], lastFetched: 0 };
+
+app.get('/api/instagram/status', (req, res) => {
+  res.json({ configured: !!instagramToken, note: instagramToken ? 'Token set' : 'Set INSTAGRAM_TOKEN env var or create instagram_token.txt' });
+});
+
+app.get('/api/instagram/feed', async (req, res) => {
+  if (!instagramToken) return res.status(503).json({ error: 'Instagram not configured. Set INSTAGRAM_TOKEN.' });
+  if (Date.now() - instagramCache.lastFetched < 10 * 60 * 1000) return res.json(instagramCache);
+  try {
+    const fetch = require('node-fetch');
+    const url = `https://graph.instagram.com/me/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&access_token=${instagramToken}&limit=25`;
+    const r = await fetch(url);
+    const data = await r.json();
+    instagramCache = { media: data.data || [], lastFetched: Date.now() };
+    res.json(instagramCache);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ===== SCHOOLOGY (REST API) =====
+let schoologyKey = process.env.SCHOOLOGY_KEY || fs.existsSync('schoology_key.txt') ? fs.readFileSync('schoology_key.txt', 'utf8').trim() : null;
+let schoologySecret = process.env.SCHOOLOGY_SECRET || fs.existsSync('schoology_secret.txt') ? fs.readFileSync('schoology_secret.txt', 'utf8').trim() : null;
+let schoologyCache = { courses: [], assignments: [], lastFetched: 0 };
+
+app.get('/api/schoology/status', (req, res) => {
+  res.json({ configured: !!(schoologyKey && schoologySecret), note: (schoologyKey && schoologySecret) ? 'API keys set' : 'Set SCHOOLOGY_KEY and SCHOOLOGY_SECRET env vars or create schoology_key.txt and schoology_secret.txt' });
+});
+
+app.get('/api/schoology/dashboard', async (req, res) => {
+  if (!schoologyKey || !schoologySecret) return res.status(503).json({ error: 'Schoology not configured.' });
+  if (Date.now() - schoologyCache.lastFetched < 10 * 60 * 1000) return res.json(schoologyCache);
+  try {
+    const fetch = require('node-fetch');
+    const oauth = require('oauth-1.0a');
+    const crypto = require('crypto');
+    const oa = oauth({ consumer: { key: schoologyKey, secret: schoologySecret }, signature_method: 'HMAC-SHA1', hash_function(base, key) { return crypto.createHmac('sha1', key).update(base).digest('base64'); } });
+    const tokenReq = { url: 'https://api.schoology.com/v1/users/me', method: 'GET' };
+    const headers = oa.toHeader(oa.authorize(tokenReq));
+    const r = await fetch(tokenReq.url, { headers });
+    const userData = await r.json();
+    schoologyCache = { user: userData, courses: [], assignments: [], lastFetched: Date.now() };
+    res.json(schoologyCache);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ===== LINKEDIN (OAuth2 API) =====
+let linkedinToken = process.env.LINKEDIN_TOKEN || (fs.existsSync('linkedin_token.txt') ? fs.readFileSync('linkedin_token.txt', 'utf8').trim() : null);
+let linkedinCache = { profile: null, posts: [], lastFetched: 0 };
+
+app.get('/api/linkedin/status', (req, res) => {
+  res.json({ configured: !!linkedinToken, note: linkedinToken ? 'Token set' : 'Set LINKEDIN_TOKEN env var or create linkedin_token.txt' });
+});
+
+app.get('/api/linkedin/feed', async (req, res) => {
+  if (!linkedinToken) return res.status(503).json({ error: 'LinkedIn not configured. Set LINKEDIN_TOKEN.' });
+  if (Date.now() - linkedinCache.lastFetched < 10 * 60 * 1000) return res.json(linkedinCache);
+  try {
+    const fetch = require('node-fetch');
+    const r = await fetch('https://api.linkedin.com/v2/me', { headers: { 'Authorization': 'Bearer ' + linkedinToken, 'X-Restli-Protocol-Version': '2.0.0' } });
+    const profile = await r.json();
+    linkedinCache = { profile, posts: [], lastFetched: Date.now() };
+    res.json(linkedinCache);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
