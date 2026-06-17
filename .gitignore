@@ -7,3 +7,4 @@ discord_token.txt
 .DS_Store
 Thumbs.db
 public/_test_syntax.js
+public/_test.js
